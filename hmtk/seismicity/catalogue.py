@@ -272,6 +272,38 @@ class Catalogue(object):
             else:
                 continue
 
+    def merge_catalogue(self, input_catalogue, sort_in_place=True):
+        """
+        Merges a second catalogue into the current one
+        :param input_catalogue:
+            Second catalogue as instance of :class:
+            hmtk.seismicty.catalogue.Catalogue
+        :param bool sort_in_place:
+            Sorts the merged catalogues immediately after merging (True)
+            or leaves the catalogue unsorted (False)
+        """
+        assert isinstance(input_catalogue, self.__class__)
+        for key in self.data.keys():
+            if (len(self.data[key]) == 0) and\
+                (len(input_catalogue.data[key]) == 0):
+                # Trivial merge - skip
+                continue
+            if isinstance(input_catalogue.data[key], np.ndarray):
+                 self.data[key] = np.hstack([self.data[key],
+                                             input_catalogue.data[key]])
+            elif (isinstance(input_catalogue.data[key], list)) and\
+                (isinstance(self.data[key], list)):
+                 self.data[key].extend(input_catalogue.data[key])
+            else:
+                pass
+
+        if sort_in_place:
+            # Sort catalogue
+            self.sort_catalogue_chronologically()
+
+
+
+
     def get_depth_distribution(self, depth_bins, normalisation=False,
                                bootstrap=None):
         '''

@@ -53,6 +53,7 @@
 
 import unittest
 import numpy as np
+from copy import deepcopy
 from openquake.hazardlib.geo.mesh import Mesh
 from openquake.hazardlib.geo.utils import spherical_to_cartesian
 from hmtk.seismicity.catalogue import Catalogue
@@ -181,6 +182,67 @@ class CatalogueTestCase(unittest.TestCase):
         np.testing.assert_array_equal(cat1.data['eventID'],
                                              np.array([101]))
         self.assertListEqual(cat1.data['Agency'], ['YYY'])
+
+
+class TestMergingCatalogues(unittest.TestCase):
+    """
+    Tests the function to merge two catalogues
+    """
+    def setUp(self):
+        """
+        """
+        self.master = Catalogue()
+
+        self.master.data['eventID'] = np.array([1001, 1002, 1003])
+        self.master.data['Agency'] = ['XXX', 'XXX', 'XXX']
+        self.master.data['year'] = np.array([1991, 2002, 2008])
+        self.master.data['month'] = np.array([1, 2, 3])
+        self.master.data['day'] = np.array([1, 2, 3])
+        self.master.data['hour'] = np.array([1, 2, 3])
+        self.master.data['minute'] = np.array([1, 2, 3])
+        self.master.data['second'] = np.array([1., 2., 3.])
+        self.master.data['longitude'] = np.array([10., 12., 13.])
+        self.master.data['latitude'] = np.array([10., 12., 13.])
+        self.master.data['depth'] = np.array([11., 12., 13.])
+        self.master.data['magnitude'] = np.array([4., 5., 6.])
+        self.master.data['timeError'] = np.array([], dtype=float)
+
+        self.merger = deepcopy(self.master)
+        self.merger.data['eventID'] = np.array([2001, 2002, 2003])
+        self.merger.data['Agency'] = ['YYY', 'YYY', 'YYY']
+        self.merger.data['year'] = np.array([1995, 2004, 2010])
+
+    def test_merge_with_sort(self):
+        """
+        Tests the merge of the catalogue, sorting on merge
+        """
+        cat1 = deepcopy(self.master)
+        cat1.merge_catalogue(self.merger, sort_in_place=True)
+        np.testing.assert_array_equal(
+            cat1.data['eventID'],
+            np.array([1001, 2001, 1002, 2002, 1003, 2003]))
+        self.assertListEqual(cat1.data['Agency'],
+                ['XXX', 'YYY', 'XXX', 'YYY', 'XXX', 'YYY'])
+        np.testing.assert_array_equal(
+            cat1.data['year'],
+            np.array([1991, 1995, 2002, 2004, 2008, 2010]))
+
+
+    def test_merge_without_sort(self):
+        """
+        Tests the merge of the catalogue, sorting on merge
+        """
+        cat1 = deepcopy(self.master)
+        cat1.merge_catalogue(self.merger, sort_in_place=False)
+        np.testing.assert_array_equal(
+            cat1.data['eventID'],
+            np.array([1001, 1002, 1003, 2001, 2002, 2003]))
+        self.assertListEqual(cat1.data['Agency'],
+                ['XXX', 'XXX', 'XXX', 'YYY', 'YYY', 'YYY'])
+        np.testing.assert_array_equal(
+            cat1.data['year'],
+            np.array([1991, 2002, 2008, 1995, 2004, 2010]))
+
 
 
 class TestGetDistributions(unittest.TestCase):
