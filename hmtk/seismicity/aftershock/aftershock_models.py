@@ -65,11 +65,3 @@ class ShapiroEtAl2010(BaseAftershockModel):
 
 
 
-class ConvertitoEtAl2012(BaseAftershockModel):
-    """
-
-    """
-    def get_rates(self, magnitudes, elapsed_time=None):
-        """
-        """
-
