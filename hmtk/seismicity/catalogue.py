@@ -52,6 +52,7 @@ Prototype of a 'Catalogue' class
 """
 
 import numpy as np
+from datetime import datetime
 from openquake.hazardlib.geo.mesh import Mesh
 from openquake.hazardlib.geo.utils import spherical_to_cartesian
 from hmtk.seismicity.utils import (decimal_time, bootstrap_histogram_1D,
@@ -178,6 +179,29 @@ class Catalogue(object):
 #
 #        for i, key in enumerate(keys):
 #            self.data[key] = data_array[:, i]
+    def add_datetime(self):
+        """
+        Adds a set of datetime objects to the class
+        """
+        # Pre-allocating
+        self.data["datetime"] = [None
+            for iloc in range(0, self.get_number_events())]
+        secs = np.floor(self.data["second"])
+        microsecs = np.round((self.data["second"] - secs) * 100000)
+        secs = secs.astype(int)
+        microsecs = microsecs.astype(int)
+        for iloc in range(0, self.get_number_events()):
+            self.data["datetime"][iloc] = datetime(
+                self.data["year"][iloc],
+                self.data["month"][iloc],
+                self.data["day"][iloc],
+                self.data["hour"][iloc],
+                self.data["minute"][iloc],
+                secs[iloc],
+                microsecs[iloc])
+        return self.data["datetime"]
+
+
 
     def catalogue_mt_filter(self, mt_table, flag=None):
         """
