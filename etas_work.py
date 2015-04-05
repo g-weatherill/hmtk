@@ -8,20 +8,22 @@ import random
 import numpy as np
 from copy import deepcopy
 from math import fabs, asin, radians, sin, sqrt, log10
-from openquake.commonlib.source import SourceConverter, parse_source_model
+from openquake.commonlib.source import parse_source_model
+from openquake.commonlib.sourceconverter import SourceConverter
 from openquake.hazardlib.mfd.truncated_gr import TruncatedGRMFD
 from openquake.hazardlib.geo.surface import PlanarSurface
+from hmtk.seismicity.utils import haversine
 # Get source model from file
 
-def get_source_model(ifile, inv_time, rupt_mesh_spacing=1.0, mfd_width=0.1,
-        area_discretisation=10.0):
+def get_source_model(ifile, inv_time, rupt_mesh_spacing=1.0,
+        complex_mesh_spacing=5.0, mfd_width=0.1, area_discretisation=10.0):
     """
     Parses the source model file and returns an instance of the source model
     as a list of instances of the :class:
     openquake.hazardlib.source.base.BaseSeismicSource
     """
-    converter = SourceConverter(inv_time, rupt_mesh_spacing, mfd_width,
-                                       area_discretisation)
+    converter = SourceConverter(inv_time, rupt_mesh_spacing,
+        complex_mesh_spacing, mfd_width, area_discretisation)
     return parse_source_model(ifile, converter)[0]
 
 def _get_tstar(params):
@@ -341,13 +343,88 @@ def get_etas_catalogue_for_source(input_source, params, max_time, start_time,
 
 
 
+class SpatialDensityFunction(object):
+    """
+    Class to distribute the spatial density of an event given an initial
+    set of parameters
+    """
+    def __init__(self, params, lons, lats, depths):
+        """
+
+        """
+        self.params = params
+        self.mesh = np.column_stack([lons, lats, depths])
+        self.npts = np.shape(self.mesh)[0]
+        self._build_constants()
+
+    @classmethod
+    def from_mesh(cls, params, mesh):
+        """
+        Instantiate the class from an openquake Mesh object
+        """
+
+        if len(mesh.lons.shape) > 1:
+            n_y, n_x = mesh.lons.shape
+            npts = n_y * n_x
+            lons = np.reshape(np.copy(mesh.lons), [npts, 1]).flatten()
+            lats = np.reshape(np.copy(mesh.lats), [npts, 1]).flatten()
+            depths = np.reshape(np.copy(mesh.depths), [npts, 1]).flatten()
+        else:
+            npts = mesh.lons.shape[0]
+            lons = np.copy(mesh.lons)
+            lats = np.copy(mesh.lats)
+            if mesh.depths is not None:
+                depths = np.copy(mesh.depths)
+            else:
+                depths = np.zeros_like(lons)
+
+        return cls(params, lons, lats, depths)
+
+    def _build_constants(self):
+        """
+        Builds any constants from the parameters and adds them to the
+        parameters dictionary
+        """
+        pass
+
+    def calculate(self, hypo_lon, hypo_lat, hypo_depth, magnitude=None):
+        """
+
+        """
+        raise NotImplementedError
+
+class BachHainzlDensity(SpatialDensityFunction):
+    """
+
+    """
+
+    def _build_constants(self):
+        """
+        The numerator of the model is constant from the parameters
+        denom = (q - 1) d ** (2 * (q - 1))
+        """
+        self.params["numer"] = (self.params["q"] - 1.0) * (self.params["d"] **
+            (2.0 * (self.params["q"] - 1.0)))
+
+
+    def calculate(self, hypo_lon, hypo_lat, hypo_depth, magnitude=None):
+        """
+
+        """
+        d_val = masshaversinedist(lons, lats, hypo_lon, hypo_lat)
+        d_val = np.sqrt(d_val ** 2. + (hypo_depth - depths) ** 2.)
+        denominator = (d_val ** 2.0) + (params["d"] ** 2.)
+        return self.params["numer"] / (np.pi * (denominator ** params["q"]))
+
+
+
 class SimpleETAS(object):
     """
     Test module for simple ETAS (no spatial dependence)
     """
-    def __init__(self, params, catalogue):
+    def __init__(self, params, catalogue, spatial_model=None):
         """
-
+   
         """
         for param in ["K", "c", "p", "alpha", "mu", "b", "time_window"]:
             assert param in params.keys()
@@ -356,6 +433,11 @@ class SimpleETAS(object):
         _ = self.catalogue.add_datetime()
         self.start_time = None
         self.end_time = None
+        self.spatial_model = spatial_model
+        if self.spatial_model:
+            self.npts = self.spatial_model.npts
+        else:
+            self.npts = 0
 
     def get_probability_in_time_window(self, start_time, window_length, mmin,
             mmax, bin_width):
@@ -364,31 +446,41 @@ class SimpleETAS(object):
             Start time as instance of datetime.datetime object
         """
         self.start_time = start_time
-        mag_dist = np.arange(mmin - bin_width / 2.,
+        mag_dist = np.arange(mmin + bin_width / 2.,
                              mmax + bin_width,
                              bin_width)
         total_rate = (param["mu"] / param["time_window"]) * window_length
-        rates = self.distribute_rate(total_rate, mag_dist)
+        rates = np.tile(self._distribute_rate(total_rate, mag_dist),
+                        [self.npts, 1]) 
         self.end_time = start_time + timedelta(days = int(window_length))
         for iloc in range(0, self.catalogue.get_number_events()):
             aftershock_rate = self.get_magnitude_rate(
                 self.catalogue.data["datetime"][iloc],
                 self.catalogue.data["magnitude"][iloc],
                 mag_dist[0])
-            rates += self._distribute_rate(aftershock_rate, mag_dist)
-        # Convert from rates in the time window to probabilities using
-        # the Poisson formula
-        return 1.0 - np.exp(-rates)
+            aftershock_rate = self._distribute_rate(aftershock_rate, mag_dist)
+            if self.spatial_model:
+                spatial_density = self.spatial_model.calculate(
+                    self.catalogue.data["longitude"][iloc],
+                    self.catalogue.data["latitude"][iloc],
+                    self.catalogue.data["depth"][iloc],
+                    self.catalogue.data["magnitude"][iloc])
+            else:
+                spatial_density = 1.0
+            for jloc, mag_rate in enumerate(aftershock_rate):
+                rates[:, jloc] += (mag_rate * spatial_density)
+        return rates
 
-    def _distribute_rate(self, rate, magnitudes):
+    def _distribute_rate(self, rate, magnitudes, bin_width):
         """
         Given an input activity rate, distribute between Mmin and Mmax using
-        the truncated Gutenberg-Ricter distribution
+        the truncated Gutenberg-Ricter distribution 
         """
-        a_val = np.log10(rate) + (self.params["b"] * magnitudes[0])
-        rates = 10.0 ** (a_val - self.params["b"] * magnitudes[:-1]) -\
-                10.0 ** (a_val - self.params["b"] * magnitudes[1:])
-        return rates
+        beta = self.params["b"] * np.log(10.0)
+        f_m = beta * np.exp(-beta * (magnitudes - magnitudes[0])) /\
+                (1.0 - np.exp(-beta(magnitudes[-1] - magnitudes[0]))) *\
+                bin_width
+        return rate * f_m
 
 
     def get_magnitude_rate(self, event_time, magnitude, mmin):
@@ -408,3 +500,4 @@ class SimpleETAS(object):
         d_t = float((t_2 - t_1).days)
         return self.params["K"] / ((self.params["c"] + d_t) **
                                    self.params["p"])
+
